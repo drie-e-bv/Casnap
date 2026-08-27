@@ -1198,7 +1198,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
           Toon ook afgeronde actiepunten
         </label>
         <label class="show-inactive-toggle">
-          <input type="checkbox" id="ap-only-mine" checked>
+          <input type="checkbox" id="ap-only-mine">
           Toon enkel mijn actiepunten
         </label>
         <button class="btn btn-ghost btn-sm" id="ap-refresh" type="button">Vernieuwen</button>
@@ -2603,7 +2603,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
     state.projects.push({
       id: null, _localId: state.nextProjectId++, _expanded: true,
       naam: '', locatie: '', projectnummer: '', sharepoint_url: '', whatsapp_group_url: '', notities: '',
-      werfleider_naam: '', contactpersonen: [], actief: true
+      werfleider_naam: '', projectleider_naam: '', contactpersonen: [], actief: true
     });
     // een nieuw project is altijd actief -> zorg dat het zichtbaar is ook als "toon inactieve" uit staat
     renderProjects();
@@ -2614,6 +2614,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
       naam: p.naam, locatie: p.locatie, projectnummer: p.projectnummer,
       sharepoint_url: p.sharepoint_url, whatsapp_group_url: p.whatsapp_group_url, notities: p.notities,
       werfleider_naam: p.werfleider_naam || null,
+      projectleider_naam: p.projectleider_naam || null,
       contactpersonen: p.contactpersonen || [], actief: p.actief !== false
     };
     if(!fields.naam){ alert('Geef het project een naam voor je opslaat.'); return; }
@@ -2720,6 +2721,53 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
     }
   }
 
+  // Vult de "Vaste projectleider"-dropdown van een project -- zelfde opzet als
+  // populateWerfleiderSelect() hierboven, maar voor een apart veld. Nieuw op vraag van Peter
+  // (2026-08-27): "Ik ben de werfleider, ingelogd met mijn account, maar ik kan mij niet
+  // selecteren als account... Vaste projectleider zou moeten te selecteren zijn bij het project
+  // (zoals werfleider) en dan toe te wijzen aan een taak bij het verslag." De kernreden dat
+  // iemand zichzelf niet als Verantwoordelijke kon kiezen was dat de app iemand enkel herkent via
+  // een e-mailmatch in Team leden/Bureau, niet via een rol zoals "werfleider" -- door de
+  // projectleider (net als de werfleider) automatisch als contactpersoon van het project te
+  // registreren (zie syncProjectleiderContact hieronder), wordt die persoon sowieso altijd
+  // selecteerbaar als Verantwoordelijke, ongeacht Team leden-koppeling.
+  function populateProjectleiderSelect(selectEl, p){
+    selectEl.innerHTML = '<option value="">— geen —</option>';
+    const teamLeden = (state.company && Array.isArray(state.company.team_leden)) ? state.company.team_leden : [];
+    let found = false;
+    if(teamLeden.length){
+      const grp = document.createElement('optgroup');
+      grp.label = 'Medewerkers (eigen firma)';
+      teamLeden.forEach(t => {
+        if(!t.naam) return;
+        const o = document.createElement('option');
+        o.value = t.naam; o.textContent = t.naam;
+        if(t.naam === p.projectleider_naam){ o.selected = true; found = true; }
+        grp.appendChild(o);
+      });
+      selectEl.appendChild(grp);
+    }
+    const externen = collectExterneContacten();
+    if(externen.length){
+      const grp = document.createElement('optgroup');
+      grp.label = 'Externen (andere firma\'s)';
+      externen.forEach(c => {
+        const o = document.createElement('option');
+        o.value = c.naam; o.textContent = c.bedrijf ? (c.naam + ' (' + c.bedrijf + ')') : c.naam;
+        if(c.naam === p.projectleider_naam){ o.selected = true; found = true; }
+        grp.appendChild(o);
+      });
+      selectEl.appendChild(grp);
+    }
+    if(p.projectleider_naam && !found){
+      const o = document.createElement('option');
+      o.value = p.projectleider_naam;
+      o.textContent = p.projectleider_naam + ' (niet meer in de lijst)';
+      o.selected = true;
+      selectEl.appendChild(o);
+    }
+  }
+
   // Houdt één contactpersoon-rij (gemarkeerd met isWerfleider) gesynchroniseerd met de gekozen
   // "Vaste werfleider" van het project -- zo verschijnt de werfleider automatisch mee in de
   // aanvinkbare aanwezigheidslijst bij een verslag, zonder die manueel nog eens te moeten
@@ -2754,6 +2802,39 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
         rol: 'Werfleider', naam: p.werfleider_naam, bedrijf: (externMatch && externMatch.bedrijf) || '',
         email: (teamMatch && teamMatch.email) || (externMatch && externMatch.email) || '',
         gsm: (teamMatch && teamMatch.gsm) || (externMatch && externMatch.gsm) || '', isWerfleider: true
+      });
+    }
+  }
+
+  // Zelfde als syncWerfleiderContact() hierboven, maar voor de "Vaste projectleider" (nieuw,
+  // 2026-08-27) -- gebruikt een eigen markering (isProjectleider) zodat beide rollen naast elkaar
+  // kunnen bestaan (bv. dezelfde persoon is soms allebei, soms niet) zonder elkaars contactrij te
+  // overschrijven.
+  function syncProjectleiderContact(p){
+    if(!Array.isArray(p.contactpersonen)) p.contactpersonen = [];
+    const existing = p.contactpersonen.find(c => c.isProjectleider);
+    if(!p.projectleider_naam){
+      if(existing) p.contactpersonen = p.contactpersonen.filter(c => c !== existing);
+      return;
+    }
+    const teamMatch = (state.company && Array.isArray(state.company.team_leden))
+      ? state.company.team_leden.find(t => t.naam === p.projectleider_naam)
+      : null;
+    const externMatch = teamMatch ? null : collectExterneContacten().find(c => c.naam === p.projectleider_naam);
+    if(existing){
+      existing.naam = p.projectleider_naam;
+      existing.rol = existing.rol || 'Projectleider';
+      if(teamMatch && teamMatch.email) existing.email = teamMatch.email;
+      if(teamMatch && teamMatch.gsm) existing.gsm = teamMatch.gsm;
+      if(externMatch && externMatch.bedrijf && !existing.bedrijf) existing.bedrijf = externMatch.bedrijf;
+      if(externMatch && externMatch.email && !existing.email) existing.email = externMatch.email;
+      if(externMatch && externMatch.gsm && !existing.gsm) existing.gsm = externMatch.gsm;
+    } else {
+      p.contactpersonen.unshift({
+        id: 'pl' + Date.now() + Math.random().toString(36).slice(2,7),
+        rol: 'Projectleider', naam: p.projectleider_naam, bedrijf: (externMatch && externMatch.bedrijf) || '',
+        email: (teamMatch && teamMatch.email) || (externMatch && externMatch.email) || '',
+        gsm: (teamMatch && teamMatch.gsm) || (externMatch && externMatch.gsm) || '', isProjectleider: true
       });
     }
   }
@@ -2813,6 +2894,11 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
             <select class="p-werfleider"></select>
             <p class="hint">Kies uit de eigen Team leden-lijst (Bedrijfsgegevens → Team leden), of koppel een externe (bv. een architect die als werfleider optreedt) — die lijst komt uit de contactpersonen die al eens bij een project zijn ingevuld. Wordt automatisch mee opgenomen in de contactpersonen hieronder.</p>
           </div>
+          <div class="field">
+            <label>Vaste projectleider</label>
+            <select class="p-projectleider"></select>
+            <p class="hint">Meestal jezelf, of wie dit project intern trekt — zelfde keuzelijst als bij "Vaste werfleider" (eigen Team leden of een externe). Wordt automatisch mee opgenomen in de contactpersonen hieronder, zodat je (of de gekozen persoon) hier altijd zelf als "Verantwoordelijke" bij een taak te kiezen bent.</p>
+          </div>
           <div class="field"><label>Notities</label><input type="text" class="p-notities"></div>
           <div class="field">
             <label>Vaste contactpersonen (bouwheer, coördinator, werfleider, ...) — verschijnen als aanvinkbare aanwezigen bij elk verslag van dit project</label>
@@ -2842,6 +2928,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
         row.querySelector('.p-wagroup').value = p.whatsapp_group_url;
         row.querySelector('.p-notities').value = p.notities;
         populateWerfleiderSelect(row.querySelector('.p-werfleider'), p);
+        populateProjectleiderSelect(row.querySelector('.p-projectleider'), p);
 
         row.querySelector('.p-naam').addEventListener('input', e => {
           p.naam = e.target.value;
@@ -2904,6 +2991,11 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
         row.querySelector('.p-werfleider').addEventListener('change', e => {
           p.werfleider_naam = e.target.value;
           syncWerfleiderContact(p);
+          renderContactRows();
+        });
+        row.querySelector('.p-projectleider').addEventListener('change', e => {
+          p.projectleider_naam = e.target.value;
+          syncProjectleiderContact(p);
           renderContactRows();
         });
       }
@@ -4626,17 +4718,21 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
     const onlyMine = el('ap-only-mine').checked;
     const tbody = el('ap-tbody');
 
-    // "Toon enkel de mijne" (standaard aan, op vraag van Peter): filtert op de ingelogde
-    // gebruiker via het Team-leden-adres.
+    // "Toon enkel de mijne": filtert op de ingelogde gebruiker via het Team-leden-/Bureau-adres.
+    // Bewust standaard UITGEVINKT (bijgewerkt 2026-08-27, gemeld door Peter): stond dit standaard
+    // aan, dan toonde het tabblad bij het openen automatisch al iemands eigen actiepunten zodra
+    // die persoon aan een teamlid gekoppeld kon worden -- exact de "standaard toch iets tonen"
+    // die met de hieronder beschreven wijziging net vermeden moest worden. Het vinkje zelf blijft
+    // een volwaardige, expliciete keuze: aanvinken telt hieronder mee als "ik filter nu".
     const myNaam = getCurrentUserNaam();
     const myNaamActive = onlyMine && !!myNaam;
     el('ap-mine-hint').style.display = (onlyMine && !myNaam) ? 'block' : 'none';
 
     // Op vraag van Peter (2026-08-27): "Graag hier nooit iets weergeven, maar werken met
     // selectie" -- pas een overzicht tonen zodra minstens één gerichte keuze gemaakt is
-    // (projectleider, medewerker, project of een zoekterm), i.p.v. standaard de (soms
-    // ongefilterde) volledige lijst. Zo'n gerichte keuze is ook wat "Enkel mijn actiepunten"
-    // hierboven feitelijk is, dus die telt hier ook mee zolang de koppeling lukt.
+    // (projectleider, medewerker, project, zoekterm, of het zelf aangevinkte "Enkel mijn
+    // actiepunten"), i.p.v. standaard de (soms ongefilterde) volledige lijst of -- de fout die
+    // hier zat -- stilzwijgend al iemands eigen lijst.
     const hasSelection = !!(projectFilter || projectleiderFilter || medewerkerFilter || search || myNaamActive);
     el('ap-empty-filter-hint').style.display = hasSelection ? 'none' : 'block';
     if(!hasSelection){
