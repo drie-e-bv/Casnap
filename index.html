@@ -2721,48 +2721,31 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
     }
   }
 
-  // Vult de "Vaste projectleider"-dropdown van een project -- zelfde opzet als
-  // populateWerfleiderSelect() hierboven, maar voor een apart veld. Nieuw op vraag van Peter
-  // (2026-08-27): "Ik ben de werfleider, ingelogd met mijn account, maar ik kan mij niet
-  // selecteren als account... Vaste projectleider zou moeten te selecteren zijn bij het project
-  // (zoals werfleider) en dan toe te wijzen aan een taak bij het verslag." De kernreden dat
-  // iemand zichzelf niet als Verantwoordelijke kon kiezen was dat de app iemand enkel herkent via
-  // een e-mailmatch in Team leden/Bureau, niet via een rol zoals "werfleider" -- door de
-  // projectleider (net als de werfleider) automatisch als contactpersoon van het project te
-  // registreren (zie syncProjectleiderContact hieronder), wordt die persoon sowieso altijd
-  // selecteerbaar als Verantwoordelijke, ongeacht Team leden-koppeling.
+  // Vult de "Vaste projectleider"-dropdown van een project. Nieuw op vraag van Peter (2026-08-27):
+  // "Ik ben de werfleider, ingelogd met mijn account, maar ik kan mij niet selecteren als
+  // account... Vaste projectleider zou moeten te selecteren zijn bij het project (zoals
+  // werfleider) en dan toe te wijzen aan een taak bij het verslag." Eerste versie liet hier -- net
+  // als bij werfleider -- zowel Team leden als externen toe; Peter corrigeerde dat meteen:
+  // "Vaste projectleider moet te selecteren zijn vanaf de lijst van bureaumensen van de firma" --
+  // dus UITSLUITEND de "Bureau"-lijst (Bedrijfsgegevens → Bureau), niet Team leden en niet
+  // externen van andere projecten. Door de projectleider (net als de werfleider) automatisch als
+  // contactpersoon van het project te registreren (zie syncProjectleiderContact hieronder), wordt
+  // die persoon sowieso altijd selecteerbaar als Verantwoordelijke, ongeacht Team leden-koppeling.
   function populateProjectleiderSelect(selectEl, p){
     selectEl.innerHTML = '<option value="">— geen —</option>';
-    const teamLeden = (state.company && Array.isArray(state.company.team_leden)) ? state.company.team_leden : [];
+    const bureau = (state.company && Array.isArray(state.company.bureau)) ? state.company.bureau : [];
     let found = false;
-    if(teamLeden.length){
-      const grp = document.createElement('optgroup');
-      grp.label = 'Medewerkers (eigen firma)';
-      teamLeden.forEach(t => {
-        if(!t.naam) return;
-        const o = document.createElement('option');
-        o.value = t.naam; o.textContent = t.naam;
-        if(t.naam === p.projectleider_naam){ o.selected = true; found = true; }
-        grp.appendChild(o);
-      });
-      selectEl.appendChild(grp);
-    }
-    const externen = collectExterneContacten();
-    if(externen.length){
-      const grp = document.createElement('optgroup');
-      grp.label = 'Externen (andere firma\'s)';
-      externen.forEach(c => {
-        const o = document.createElement('option');
-        o.value = c.naam; o.textContent = c.bedrijf ? (c.naam + ' (' + c.bedrijf + ')') : c.naam;
-        if(c.naam === p.projectleider_naam){ o.selected = true; found = true; }
-        grp.appendChild(o);
-      });
-      selectEl.appendChild(grp);
-    }
+    bureau.forEach(b => {
+      if(!b.naam) return;
+      const o = document.createElement('option');
+      o.value = b.naam; o.textContent = b.naam;
+      if(b.naam === p.projectleider_naam){ o.selected = true; found = true; }
+      selectEl.appendChild(o);
+    });
     if(p.projectleider_naam && !found){
       const o = document.createElement('option');
       o.value = p.projectleider_naam;
-      o.textContent = p.projectleider_naam + ' (niet meer in de lijst)';
+      o.textContent = p.projectleider_naam + ' (niet meer in de Bureau-lijst)';
       o.selected = true;
       selectEl.appendChild(o);
     }
@@ -2809,7 +2792,9 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
   // Zelfde als syncWerfleiderContact() hierboven, maar voor de "Vaste projectleider" (nieuw,
   // 2026-08-27) -- gebruikt een eigen markering (isProjectleider) zodat beide rollen naast elkaar
   // kunnen bestaan (bv. dezelfde persoon is soms allebei, soms niet) zonder elkaars contactrij te
-  // overschrijven.
+  // overschrijven. Op vraag van Peter (2026-08-27, correctie): de projectleider komt uitsluitend
+  // uit de "Bureau"-lijst (Bedrijfsgegevens → Bureau), dus e-mail/GSM worden ook enkel van dáár
+  // overgenomen -- geen "bedrijf"-veld nodig, een Bureau-persoon werkt sowieso bij de eigen firma.
   function syncProjectleiderContact(p){
     if(!Array.isArray(p.contactpersonen)) p.contactpersonen = [];
     const existing = p.contactpersonen.find(c => c.isProjectleider);
@@ -2817,24 +2802,20 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
       if(existing) p.contactpersonen = p.contactpersonen.filter(c => c !== existing);
       return;
     }
-    const teamMatch = (state.company && Array.isArray(state.company.team_leden))
-      ? state.company.team_leden.find(t => t.naam === p.projectleider_naam)
+    const bureauMatch = (state.company && Array.isArray(state.company.bureau))
+      ? state.company.bureau.find(b => b.naam === p.projectleider_naam)
       : null;
-    const externMatch = teamMatch ? null : collectExterneContacten().find(c => c.naam === p.projectleider_naam);
     if(existing){
       existing.naam = p.projectleider_naam;
       existing.rol = existing.rol || 'Projectleider';
-      if(teamMatch && teamMatch.email) existing.email = teamMatch.email;
-      if(teamMatch && teamMatch.gsm) existing.gsm = teamMatch.gsm;
-      if(externMatch && externMatch.bedrijf && !existing.bedrijf) existing.bedrijf = externMatch.bedrijf;
-      if(externMatch && externMatch.email && !existing.email) existing.email = externMatch.email;
-      if(externMatch && externMatch.gsm && !existing.gsm) existing.gsm = externMatch.gsm;
+      if(bureauMatch && bureauMatch.email) existing.email = bureauMatch.email;
+      if(bureauMatch && bureauMatch.gsm) existing.gsm = bureauMatch.gsm;
     } else {
       p.contactpersonen.unshift({
         id: 'pl' + Date.now() + Math.random().toString(36).slice(2,7),
-        rol: 'Projectleider', naam: p.projectleider_naam, bedrijf: (externMatch && externMatch.bedrijf) || '',
-        email: (teamMatch && teamMatch.email) || (externMatch && externMatch.email) || '',
-        gsm: (teamMatch && teamMatch.gsm) || (externMatch && externMatch.gsm) || '', isProjectleider: true
+        rol: 'Projectleider', naam: p.projectleider_naam, bedrijf: '',
+        email: (bureauMatch && bureauMatch.email) || '',
+        gsm: (bureauMatch && bureauMatch.gsm) || '', isProjectleider: true
       });
     }
   }
@@ -2897,7 +2878,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
           <div class="field">
             <label>Vaste projectleider</label>
             <select class="p-projectleider"></select>
-            <p class="hint">Meestal jezelf, of wie dit project intern trekt — zelfde keuzelijst als bij "Vaste werfleider" (eigen Team leden of een externe). Wordt automatisch mee opgenomen in de contactpersonen hieronder, zodat je (of de gekozen persoon) hier altijd zelf als "Verantwoordelijke" bij een taak te kiezen bent.</p>
+            <p class="hint">Meestal jezelf, of wie dit project intern trekt — kies uit de "Bureau"-lijst (Bedrijfsgegevens → Bureau). Staat iemand daar nog niet bij, voeg die eerst toe onder Bedrijfsgegevens. Wordt automatisch mee opgenomen in de contactpersonen hieronder, zodat je (of de gekozen persoon) hier altijd zelf als "Verantwoordelijke" bij een taak te kiezen bent.</p>
           </div>
           <div class="field"><label>Notities</label><input type="text" class="p-notities"></div>
           <div class="field">
